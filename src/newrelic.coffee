@@ -17,6 +17,7 @@
 #   hubot newrelic apps instances <app_id> - Returns a list of one application's instances
 #   hubot newrelic apps hosts <app_id> - Returns a list of one application's hosts
 #   hubot newrelic deployments <app_id> - Returns a filtered list of application deployment events
+#   hubot newrelic deployments recent <app_id> - Returns a filtered list of application deployment events from the past week
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
 #   hubot newrelic ktrans id <ktrans_id> - Returns a single key transaction
 #   hubot newrelic servers - Returns statistics for all servers from New Relic
@@ -30,9 +31,11 @@
 # Contributors:
 #   spkane
 #   cmckni3
+#   marcesher
 #
 
 require('date.format')
+gist = require 'quick-gist'
 
 DATE_FORMAT_KEY     = 'newrelic_date_format'
 DEFAULT_DATE_FORMAT = '{Y}-{M}-{D} at {h}:{m}:{s}'
@@ -48,15 +51,9 @@ plugin = (robot) ->
   if !date_format? or date_format is ''
     robot.brain.set DATE_FORMAT_KEY, DEFAULT_DATE_FORMAT
 
-  switch robot.adapterName
-    when "hipchat"
-      config.up = '(continue)'
-      config.down = '(failed)'
-      config.blockquote = '/code '
-    when "slack"
-      config.up = ':white_check_mark:'
-      config.down = ':no_entry_sign:'
-      config.blockquote = '>>> '
+  config.up = ':white_check_mark:'
+  config.down = ':no_entry_sign:'
+  config.blockquote = '>>> '
 
   _parse_response = (cb) ->
     (err, res, body) ->
@@ -72,10 +69,22 @@ plugin = (robot) ->
   _request = (path, cb) ->
     robot.http(apiBaseUrl + path)
       .header('X-Api-Key', apiKey)
-      .header("Content-Type","application/x-www-form-urlencoded")
+      .header('Content-Type','application/x-www-form-urlencoded')
 
-  get = (path, cb) -> _request(path).get() _parse_response(cb)
-  post = (path, data, cb) -> _request(path).post(data) _parse_response(cb)
+  get = (path, cb) ->
+    return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
+    _request(path).get() _parse_response(cb)
+  post = (path, data, cb) ->
+    return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
+    _request(path).post(data) _parse_response(cb)
+
+  send_message = (msg, messages) ->
+    if messages.length < 1000
+      msg.send messages
+    else
+      gist {content: messages, enterpriseOnly: true, fileExtension: 'md'}, (err, resp, data) ->
+        url = data.html_url
+        msg.send "View output at: " + url
 
   robot.respond /(newrelic|nr) help$/i, (msg) ->
     msg.send "
@@ -106,7 +115,8 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.apps json.applications, config
+        console.log("WTF")
+        send_message msg, (plugin.apps json.applications, config)
 
   robot.respond /(newrelic|nr) apps errors$/i, (msg) ->
     get 'applications.json', (err, json) ->
@@ -115,7 +125,7 @@ Note: In these commands you can shorten newrelic to nr.\n
       else
         result = (item for item in json.applications when item.error_rate > 0)
         if result.length > 0
-          msg.send plugin.apps result, config
+         send_message msg, (plugin.apps result, config)
         else
           msg.send "No applications with errors."
 
@@ -124,21 +134,21 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.ktrans json.key_transactions, config
+        send_message msg, (plugin.ktrans json.key_transactions, config)
 
   robot.respond /(newrelic|nr) servers$/i, (msg) ->
     get 'servers.json', (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.servers json.servers, config
+        send_message msg, (plugin.servers json.servers, config)
 
   robot.respond /(newrelic|nr) users$/i, (msg) ->
     get 'users.json', (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.users json.users, config
+        send_message msg, (plugin.users json.users, config)
 
   robot.respond /(newrelic|nr) apps name ([\s\S]+)$/i, (msg) ->
     data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
@@ -146,28 +156,28 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.apps json.applications, config
+        send_message msg, (plugin.apps json.applications, config)
 
   robot.respond /(newrelic|nr) apps hosts ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/hosts.json", (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.hosts json.application_hosts, config
+        send_message msg, (plugin.hosts json.application_hosts, config)
 
   robot.respond /(newrelic|nr) apps instances ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/instances.json", (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.instances json.application_instances, config
+        send_message msg, (plugin.instances json.application_instances, config)
 
   robot.respond /(newrelic|nr) ktrans id ([0-9]+)$/i, (msg) ->
     get "key_transactions/#{msg.match[2]}.json", (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.ktran json.key_transaction, config
+        send_message msg, (plugin.ktran json.key_transaction, config)
 
   robot.respond /(newrelic|nr) servers name ([a-zA-Z0-9\-.]+)$/i, (msg) ->
     data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
@@ -175,7 +185,7 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.servers json.servers, config
+        send_message msg, (plugin.servers json.servers, config)
 
   robot.respond /(newrelic|nr) users email ([a-zA-Z0-9.@]+)$/i, (msg) ->
     data = encodeURIComponent('filter[email]') + '=' +  encodeURIComponent(msg.match[2])
@@ -183,7 +193,7 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        msg.send plugin.users json.users, config
+        send_message msg, (plugin.users json.users, config)
 
   robot.respond /(newrelic|nr) deployments ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
@@ -195,35 +205,49 @@ Note: In these commands you can shorten newrelic to nr.\n
           config,
           {date_format: robot.brain.get(DATE_FORMAT_KEY)}
         )
-        msg.send plugin.deployments json.deployments, opts
+        send_message msg, (plugin.deployments json.deployments, opts)
+
+  robot.respond /(newrelic|nr) deployments recent ([0-9]+)$/i, (msg) ->
+    get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        opts = Object.assign(
+          {},
+          config,
+          {date_format: robot.brain.get(DATE_FORMAT_KEY)},
+          {recent:true}
+        )
+        send_message msg, (plugin.deployments json.deployments, opts)
 
 plugin.apps = (apps, opts = {}) ->
   up = opts.up || "UP"
   down = opts.down || "DN"
+
+  header = """
+  |    | Name | ID | Response time (ms) | Throughput | Error rate %|
+  | -- | ---  | -- | ---                | ---        | ---         |
+  """
+
 
   lines = apps.map (a) ->
     line = []
     summary = a.application_summary || {}
 
     if a.reporting
-      line.push up
+      line.push "| " + up
     else
-      line.push down
+      line.push "| " + down
 
-    line.push "#{a.name} (#{a.id})"
+    line.push a.name
+    line.push a.id
+    line.push summary.response_time
+    line.push summary.throughput
+    line.push summary.error_rate
 
-    if isFinite(summary.response_time)
-      line.push "Res:#{summary.response_time}ms"
+    line.join " | "
 
-    if isFinite(summary.throughput)
-      line.push "RPM:#{summary.throughput}"
-
-    if isFinite(summary.error_rate)
-      line.push "Err:#{summary.error_rate}%"
-
-    line.join "  "
-
-  lines.join("\n")
+  "#{header}\n" + lines.join(" |\n")
 
 plugin.hosts = (hosts, opts = {}) ->
 
@@ -324,29 +348,37 @@ plugin.servers = (servers, opts = {}) ->
   up = opts.up || "UP"
   down = opts.down || "DN"
 
+  servers.sort (a, b) ->
+      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
+
+  header = """
+  |     | Name | CPU | Mem | Fullest Disk |
+  | --- | ---  | --- | --- | ---          |
+  """
+
   lines = servers.map (s) ->
     line = []
     summary = s.summary || {}
 
     if s.reporting
-      line.push up
+      line.push "| " + up
     else
-      line.push down
+      line.push "| " + down
 
     line.push "#{s.name} (#{s.id})"
 
     if isFinite(summary.cpu)
-      line.push "CPU:#{summary.cpu}%"
+      line.push "#{summary.cpu}%"
 
     if isFinite(summary.memory)
-      line.push "Mem:#{summary.memory}%"
+      line.push "#{summary.memory}%"
 
     if isFinite(summary.fullest_disk)
-      line.push "Disk:#{summary.fullest_disk}%"
+      line.push "#{summary.fullest_disk}%"
 
-    line.join "  "
+    line.join " | "
 
-  lines.join("\n")
+  "#{header}\n" + lines.join(" |\n")
 
 plugin.users = (users, opts = {}) ->
 
@@ -363,21 +395,29 @@ plugin.users = (users, opts = {}) ->
 
 plugin.deployments = (deployments, opts = {}) ->
 
+  if opts.recent
+    DAY = 1000 * 60 * 60  * 24
+    today = new Date()
+
+    recent = deployments.filter (d) ->
+      Math.round((today.getTime() - new Date(d.timestamp).getTime() ) / DAY) <= 7
+    deployments = recent
+
+  header = """
+  | Time | Deployer | Revision | Description |
+  | ---  | ---      | ---      | ---         |
+  """
+
   lines = deployments.map (d) ->
     line = []
 
+    line.push("|" + new Date(d.timestamp).format(opts.date_format))
     line.push d.user
-    line.push 'deployed'
-    line.push d.revision
-    line.push 'on'
-    line.push(new Date(d.timestamp).format(opts.date_format))
-    line.push "\n\n"
+    line.push "[#{d.revision}](#{d.changelog})"
     line.push d.description
-    line.push "\n\nCHANGELOG\n"
-    line.push d.changelog
 
-    line.join " "
+    line.join " | "
 
-  "#{opts.blockquote}#{lines.join("\n")}"
+  "#{header}\n" + lines.join(" |\n")
 
 module.exports = plugin
