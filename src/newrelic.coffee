@@ -8,7 +8,6 @@
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
 # Commands:
-#   hubot newrelic help - Returns a list of commands for this plugin
 #   hubot newrelic set date format <date_format>
 #                  see https://github.com/pillarsjs/date.format for date formats
 #   hubot newrelic apps - Returns statistics for all applications from New Relic
@@ -24,6 +23,7 @@
 #   hubot newrelic servers name <filter_string> - Returns a filtered list of servers
 #   hubot newrelic users - Returns a list of all account users from New Relic
 #   hubot newrelic user email <filter_string> - Returns a filtered list of account users
+#   hubot newrelic alerts - Returns a list of active alert violations
 #
 # Authors:
 #   statianzo
@@ -36,6 +36,7 @@
 
 require('date.format')
 gist = require 'quick-gist'
+moment = require 'moment'
 
 DATE_FORMAT_KEY     = 'newrelic_date_format'
 DEFAULT_DATE_FORMAT = '{Y}-{M}-{D} at {h}:{m}:{s}'
@@ -86,24 +87,7 @@ plugin = (robot) ->
         url = data.html_url
         msg.send "View output at: " + url
 
-  robot.respond /(newrelic|nr) help$/i, (msg) ->
-    msg.send "
-Note: In these commands you can shorten newrelic to nr.\n
-#{robot.name} newrelic help\n
-#{robot.name} newrelic set date format <date_format>\n
-              see https://github.com/pillarsjs/date.format for date formats\n
-#{robot.name} newrelic apps\n
-#{robot.name} newrelic apps errors\n
-#{robot.name} newrelic apps name <filter_string>\n
-#{robot.name} newrelic apps instances <app_id>\n
-#{robot.name} newrelic apps hosts <app_id>\n
-#{robot.name} newrelic deployments <app_id>\n
-#{robot.name} newrelic ktrans\n
-#{robot.name} newrelic ktrans id <ktrans_id>\n
-#{robot.name} newrelic servers\n
-#{robot.name} newrelic servers name <filter_string>\n
-#{robot.name} newrelic users\n
-#{robot.name} newrelic user email <filter_string>"
+
 
   robot.respond /(newrelic|nr) set date format (.+)$/i, (msg) ->
     new_date_format = msg.match[2]
@@ -115,7 +99,6 @@ Note: In these commands you can shorten newrelic to nr.\n
       if err
         msg.send "Failed: #{err.message}"
       else
-        console.log("WTF")
         send_message msg, (plugin.apps json.applications, config)
 
   robot.respond /(newrelic|nr) apps errors$/i, (msg) ->
@@ -219,6 +202,16 @@ Note: In these commands you can shorten newrelic to nr.\n
           {recent:true}
         )
         send_message msg, (plugin.deployments json.deployments, opts)
+
+
+   robot.respond /(newrelic|nr) alerts$/i, (msg) ->
+    get "alerts_violations.json?only_open=true", (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        send_message msg, (plugin.violations json.violations, config)
+
+
 
 plugin.apps = (apps, opts = {}) ->
   up = opts.up || "UP"
@@ -415,6 +408,25 @@ plugin.deployments = (deployments, opts = {}) ->
     line.push d.user
     line.push "[#{d.revision}](#{d.changelog})"
     line.push d.description
+
+    line.join " | "
+
+  "#{header}\n" + lines.join(" |\n")
+
+plugin.violations = (violations, opts = {}) ->
+
+  header = """
+  | Entity | Policy name | Opened | Duration |
+  | ---    | ---         | ---    | ---      |
+  """
+
+  lines = violations.map (v) ->
+    line = []
+
+    line.push "|" + v.entity.name
+    line.push "#{v.policy_name} - #{v.condition_name}"
+    line.push moment(v.opened_at).calendar()
+    line.push moment.duration(v.duration, 's').humanize()
 
     line.join " | "
 
