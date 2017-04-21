@@ -8,8 +8,6 @@
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
 # Commands:
-#   hubot newrelic set date format <date_format>
-#                  see https://github.com/pillarsjs/date.format for date formats
 #   hubot newrelic apps - Returns statistics for all applications from New Relic
 #   hubot newrelic apps errors - Returns statistics for applications with errors from New Relic
 #   hubot newrelic apps name <filter_string> - Returns a filtered list of applications
@@ -34,23 +32,14 @@
 #   marcesher
 #
 
-require('date.format')
 gist = require 'quick-gist'
 moment = require 'moment'
-
-DATE_FORMAT_KEY     = 'newrelic_date_format'
-DEFAULT_DATE_FORMAT = '{Y}-{M}-{D} at {h}:{m}:{s}'
 
 plugin = (robot) ->
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   apiBaseUrl = "https://#{apiHost}/v2/"
   config = {}
-
-  date_format = robot.brain.get(DATE_FORMAT_KEY)
-
-  if !date_format? or date_format is ''
-    robot.brain.set DATE_FORMAT_KEY, DEFAULT_DATE_FORMAT
 
   config.up = ':white_check_mark:'
   config.down = ':no_entry_sign:'
@@ -87,12 +76,6 @@ plugin = (robot) ->
         url = data.html_url
         msg.send "View output at: " + url
 
-
-
-  robot.respond /(newrelic|nr) set date format (.+)$/i, (msg) ->
-    new_date_format = msg.match[2]
-    robot.brain.set DATE_FORMAT_KEY, new_date_format
-    msg.send "Date format set to #{new_date_format}"
 
   robot.respond /(newrelic|nr) apps$/i, (msg) ->
     get 'applications.json', (err, json) ->
@@ -183,25 +166,14 @@ plugin = (robot) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        opts = Object.assign(
-          {},
-          config,
-          {date_format: robot.brain.get(DATE_FORMAT_KEY)}
-        )
-        send_message msg, (plugin.deployments json.deployments, opts)
+        send_message msg, (plugin.deployments json.deployments, config)
 
   robot.respond /(newrelic|nr) deployments recent ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        opts = Object.assign(
-          {},
-          config,
-          {date_format: robot.brain.get(DATE_FORMAT_KEY)},
-          {recent:true}
-        )
-        send_message msg, (plugin.deployments json.deployments, opts)
+        send_message msg, (plugin.deployments json.deployments, config)
 
 
    robot.respond /(newrelic|nr) alerts$/i, (msg) ->
@@ -404,7 +376,7 @@ plugin.deployments = (deployments, opts = {}) ->
   lines = deployments.map (d) ->
     line = []
 
-    line.push("|" + new Date(d.timestamp).format(opts.date_format))
+    line.push("|" + moment(d.timestamp).calendar())
     line.push d.user
     line.push "[#{d.revision}](#{d.changelog})"
     line.push d.description
