@@ -8,7 +8,7 @@ and copyright and related rights for that work are waived through the
 
 For further details, please see the CFPB [Source Code Policy][policy].
 
-All contributions to this project will be released under the terms specified in [[LICENSE]].
+All contributions to this project will be released under the terms specified in [LICENSE](LICENSE).
 By submitting a pull request, you are agreeing to comply with said license.
 
 [policy]: https://cfpb.github.io/source-code-policy/

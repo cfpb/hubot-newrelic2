@@ -330,7 +330,7 @@ plugin.servers = (servers, opts = {}) ->
     else
       line.push "| " + down
 
-    line.push "#{s.name} (#{s.id})"
+    line.push s.name
 
     if isFinite(summary.cpu)
       line.push "#{summary.cpu}%"
