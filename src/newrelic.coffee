@@ -173,7 +173,7 @@ plugin = (robot) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        send_message msg, (plugin.deployments json.deployments, config)
+        send_message msg, (plugin.deployments json.deployments, {recent:true})
 
 
    robot.respond /(newrelic|nr) alerts$/i, (msg) ->
