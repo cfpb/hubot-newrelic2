@@ -5,6 +5,7 @@
 #
 # Configuration:
 #   HUBOT_NEWRELIC_API_KEY
+#   HUBOT_NEWRELIC_ALERT_ROOM
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
 # Commands:
@@ -39,6 +40,10 @@ diff = require 'fast-array-diff'
 plugin = (robot) ->
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
+  room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
+  throw new Error('HUBOT_NEWRELIC_API_KEY is not set') unless apiKey
+  throw new Error('HUBOT_NEWRELIC_ALERT_ROOM is not set') unless room
+
   apiBaseUrl = "https://#{apiHost}/v2/"
   maxMessageLength = 4000 # some chat servers have a limit of 4000 chars per message. Lame.
   config = {}
@@ -66,11 +71,9 @@ plugin = (robot) ->
       .header('Content-Type','application/x-www-form-urlencoded')
 
   get = (path, cb) ->
-    return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
     _request(path).get() _parse_response(cb)
 
   post = (path, data, cb) ->
-    return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
     _request(path).post(data) _parse_response(cb)
 
 
@@ -89,7 +92,6 @@ plugin = (robot) ->
         robot.messageRoom room, "#{longMessageIntro} View output at: #{data.html_url}"
 
   poll_violations = (robot) ->
-    room = process.env.HUBOT_NEW_RELIC_ALERT_ROOM
     get "alerts_violations.json?only_open=true", (err, json) ->
       if err
         robot.messageRoom room, "New Relic Violations Polling Failed: #{err.message}"
