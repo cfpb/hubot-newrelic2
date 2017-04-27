@@ -34,16 +34,20 @@
 
 gist = require 'quick-gist'
 moment = require 'moment'
+diff = require 'fast-array-diff'
 
 plugin = (robot) ->
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   apiBaseUrl = "https://#{apiHost}/v2/"
+  maxMessageLength = 4000 # some chat servers have a limit of 4000 chars per message. Lame.
   config = {}
 
   config.up = ':white_check_mark:'
   config.down = ':no_entry_sign:'
-  config.blockquote = '>>> '
+
+  robot.brain.data.newrelicdata ?= {}
+  robot.brain.data.newrelicdata.violations ?= []
 
   _parse_response = (cb) ->
     (err, res, body) ->
@@ -64,18 +68,64 @@ plugin = (robot) ->
   get = (path, cb) ->
     return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
     _request(path).get() _parse_response(cb)
+
   post = (path, data, cb) ->
     return cb({message:'HUBOT_NEWRELIC_API_KEY is not set'}) if !apiKey
     _request(path).post(data) _parse_response(cb)
 
-  send_message = (msg, messages) ->
-    if messages.length < 1000
+
+  send_message = (msg, messages, longMessageIntro="") ->
+    if messages.length < maxMessageLength
       msg.send messages
     else
       gist {content: messages, enterpriseOnly: true, fileExtension: 'md'}, (err, resp, data) ->
-        url = data.html_url
-        msg.send "View output at: " + url
+        msg.send "#{longMessageIntro} View output at: #{data.html_url}"
 
+  message_room = (robot, room, messages, longMessageIntro="") ->
+    if messages.length < maxMessageLength
+      robot.messageRoom room, messages
+    else
+      gist {content: messages, enterpriseOnly: true, fileExtension: 'md'}, (err, resp, data) ->
+        robot.messageRoom room, "#{longMessageIntro} View output at: #{data.html_url}"
+
+  poll_violations = (robot) ->
+    room = process.env.HUBOT_NEW_RELIC_ALERT_ROOM
+    get "alerts_violations.json?only_open=true", (err, json) ->
+      if err
+        robot.messageRoom room, "New Relic Violations Polling Failed: #{err.message}"
+      else
+        #console.log json.violations
+        console.log "New Relic alerts poll. #{json.violations.length} alert(s) found"
+
+        previous = robot.brain.data.newrelicdata.violations
+        current = json.violations.map (v) -> "#{v.entity.name} - #{v.policy_name}"
+        compare = diff.diff(previous, current)
+
+        msg = ""
+        if compare.removed.length
+          msg = "**These New Relic alerts have cleared** :) \n\n"
+          for v in compare.removed
+            msg += "#{v} \n"
+
+        if compare.added.length
+          msg += "\n**There are new New Relic alerts** :( \n\n"
+          for v in compare.added
+            msg += "#{v} \n"
+
+        if msg.length
+          robot.brain.data.newrelicdata.violations = current
+          open = plugin.violations json.violations
+          msg += "\n\n**Current alerts are:** \n\n#{open} \n"
+          message_room(robot, room, msg, "New Relic alerts have been cleared or added. ")
+        else if json.violations.length
+          console.log "Violations found, but none changed since last poll... not sending message"
+
+  start_violations_polling = (robot) ->
+    setInterval ->
+      poll_violations(robot)?
+    , 1000 * 60 * 2
+
+  start_violations_polling(robot)
 
   robot.respond /(newrelic|nr) apps$/i, (msg) ->
     get 'applications.json', (err, json) ->
@@ -183,6 +233,8 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.violations json.violations, config)
 
+   robot.respond /(newrelic|nr) testpollalerts$/i, (msg) ->
+     poll_violations robot
 
 
 plugin.apps = (apps, opts = {}) ->
