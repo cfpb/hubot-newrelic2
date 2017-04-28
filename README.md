@@ -30,6 +30,7 @@ npm install --save hubot-newrelic2-cfpb
 * Add `"hubot-newrelic2-cfpb"` into your hubot project's `external-scripts.json`
 * Add `"hubot-newrelic2-cfpb": "^0.4.0"` (or other version) into your `package.json`
 * Set `HUBOT_NEWRELIC_API_KEY` to your New Relic API key
+* Set `HUBOT_NEWRELIC_ALERT_ROOM` to the string name or ID of the chat room to post alert violations (the particulars will depend on your chat application's implementation)
 * Set `HUBOT_NEWRELIC_API_HOST`. This will default to `api.newrelic.com` if not set
 
 ## Usage
@@ -38,7 +39,7 @@ npm install --save hubot-newrelic2-cfpb
 
 * List all commands
 ```
-hubot newrelic help
+hubot help newrelic
 ```
 
 #### Application Related Commands

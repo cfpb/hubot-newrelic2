@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "coffee-script": "^1.8.0",
+    "fast-array-diff":"^0.2.0",
     "moment": "2.10.2",
     "quick-gist": "^1.3.1"
   },
