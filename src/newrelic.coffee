@@ -41,8 +41,8 @@ plugin = (robot) ->
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
-  throw new Error('HUBOT_NEWRELIC_API_KEY is not set') unless apiKey
-  throw new Error('HUBOT_NEWRELIC_ALERT_ROOM is not set') unless room
+  return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
+  return robot.logger.error "Please specify a room to report New Relic notifications to at HUBOT_NEWRELIC_ALERT_ROOM" unless room
 
   apiBaseUrl = "https://#{apiHost}/v2/"
   maxMessageLength = 4000 # some chat servers have a limit of 4000 chars per message. Lame.
@@ -50,9 +50,6 @@ plugin = (robot) ->
 
   config.up = ':white_check_mark:'
   config.down = ':no_entry_sign:'
-
-  robot.brain.data.newrelicdata ?= {}
-  robot.brain.data.newrelicdata.violations ?= []
 
   _parse_response = (cb) ->
     (err, res, body) ->
@@ -99,9 +96,10 @@ plugin = (robot) ->
         #console.log json.violations
         console.log "New Relic alerts poll. #{json.violations.length} alert(s) found"
 
-        previous = robot.brain.data.newrelicdata.violations
+        previous = robot.brain.get 'newrelicviolations'
+
         current = json.violations.map (v) -> "#{v.entity.name} - #{v.policy_name}"
-        compare = diff.diff(previous, current)
+        compare = diff.diff(previous || [], current)
 
         msg = ""
         if compare.removed.length
@@ -115,9 +113,10 @@ plugin = (robot) ->
             msg += "#{v} \n"
 
         if msg.length
-          robot.brain.data.newrelicdata.violations = current
+          robot.brain.set 'newrelicviolations', current
           open = plugin.violations json.violations
-          msg += "\n\n**Current alerts are:** \n\n#{open} \n"
+          if json.violations.length
+            msg += "\n\n**Current alerts are:** \n\n#{open} \n"
           message_room(robot, room, msg, "New Relic alerts have been cleared or added. ")
         else if json.violations.length
           console.log "Violations found, but none changed since last poll... not sending message"
