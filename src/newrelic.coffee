@@ -91,7 +91,8 @@ plugin = (robot) ->
   poll_violations = (robot) ->
     get "alerts_violations.json?only_open=true", (err, json) ->
       if err
-        robot.messageRoom room, "New Relic Violations Polling Failed: #{err.message}"
+        console.log err
+        # robot.messageRoom room, "New Relic Violations Polling Failed: #{err.message}"
       else
         #console.log json.violations
         console.log "New Relic alerts poll. #{json.violations.length} alert(s) found"
