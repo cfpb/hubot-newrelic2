@@ -262,7 +262,7 @@ plugin.apps = (apps, opts = {}) ->
     line.push a.id
     line.push summary.response_time
     line.push summary.throughput
-    line.push summary.error_rate
+    line.push summary.error_rate || "&nbsp;"
 
     line.join " | "
 
