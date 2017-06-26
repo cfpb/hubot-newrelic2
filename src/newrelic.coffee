@@ -244,7 +244,7 @@ plugin.apps = (apps, opts = {}) ->
   down = opts.down || "DN"
 
   header = """
-  |    | Name | ID | Response time (ms) | Throughput | Error rate %|
+  | :white_medium_small_square: | Name | ID | Response time (ms) | Throughput | Error rate %|
   | -- | ---  | -- | ---                | ---        | ---         |
   """
 
@@ -371,7 +371,7 @@ plugin.servers = (servers, opts = {}) ->
       a.name.toLowerCase().localeCompare(b.name.toLowerCase())
 
   header = """
-  |     | Name | CPU | Mem | Fullest Disk |
+  | :white_medium_small_square: | Name | CPU | Mem | Fullest Disk |
   | --- | ---  | --- | --- | ---          |
   """
 
