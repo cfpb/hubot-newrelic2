@@ -22,7 +22,7 @@
 #   hubot newrelic servers name <filter_string> - Returns a filtered list of servers
 #   hubot newrelic users - Returns a list of all account users from New Relic
 #   hubot newrelic users email <filter_string> - Returns a filtered list of account users
-#   hubot newrelic user emails - Returns a list of all user emails
+#   hubot newrelic users emails - Returns a list of all user emails
 #   hubot newrelic alerts - Returns a list of active alert violations
 #
 # Authors:
@@ -217,7 +217,7 @@ plugin = (robot) ->
 
 
 
-  robot.respond /(newrelic|nr) user emails$/i, (msg) ->
+  robot.respond /(newrelic|nr) users emails$/i, (msg) ->
     get 'users.json', (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
