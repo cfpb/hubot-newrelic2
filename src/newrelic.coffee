@@ -21,7 +21,8 @@
 #   hubot newrelic servers - Returns statistics for all servers from New Relic
 #   hubot newrelic servers name <filter_string> - Returns a filtered list of servers
 #   hubot newrelic users - Returns a list of all account users from New Relic
-#   hubot newrelic user email <filter_string> - Returns a filtered list of account users
+#   hubot newrelic users email <filter_string> - Returns a filtered list of account users
+#   hubot newrelic user emails - Returns a list of all user emails
 #   hubot newrelic alerts - Returns a list of active alert violations
 #
 # Authors:
@@ -161,13 +162,6 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.servers json.servers, config)
 
-  robot.respond /(newrelic|nr) users$/i, (msg) ->
-    get 'users.json', (err, json) ->
-      if err
-        msg.send "Failed: #{err.message}"
-      else
-        send_message msg, (plugin.users json.users, config)
-
   robot.respond /(newrelic|nr) apps name ([\s\S]+)$/i, (msg) ->
     data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
     post 'applications.json', data, (err, json) ->
@@ -205,6 +199,14 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.servers json.servers, config)
 
+
+  robot.respond /(newrelic|nr) users$/i, (msg) ->
+    get 'users.json', (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        send_message msg, (plugin.users json.users, config)
+
   robot.respond /(newrelic|nr) users email ([a-zA-Z0-9.@]+)$/i, (msg) ->
     data = encodeURIComponent('filter[email]') + '=' +  encodeURIComponent(msg.match[2])
     post 'users.json', data, (err, json) ->
@@ -212,6 +214,15 @@ plugin = (robot) ->
         msg.send "Failed: #{err.message}"
       else
         send_message msg, (plugin.users json.users, config)
+
+
+
+  robot.respond /(newrelic|nr) user emails$/i, (msg) ->
+    get 'users.json', (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        send_message msg, (plugin.useremails json.users, config)
 
   robot.respond /(newrelic|nr) deployments ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
@@ -409,6 +420,13 @@ plugin.users = (users, opts = {}) ->
     line.push "Role: #{u.role}"
 
     line.join "  "
+
+  lines.join("\n")
+
+plugin.useremails = (users, opts = {}) ->
+
+  lines = users.map (u) ->
+    line = "#{u.email}"
 
   lines.join("\n")
 
