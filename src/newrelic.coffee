@@ -5,6 +5,8 @@
 #
 # Configuration:
 #   HUBOT_NEWRELIC_API_KEY
+#   HUBOT_NEWRELIC_INSIGHTS_API_KEY
+#   HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
 #   HUBOT_NEWRELIC_ALERT_ROOM
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
@@ -16,6 +18,7 @@
 #   hubot newrelic apps hosts <app_id> - Returns a list of one application's hosts
 #   hubot newrelic deployments <app_id> - Returns a filtered list of application deployment events
 #   hubot newrelic deployments recent <app_id> - Returns a filtered list of application deployment events from the past week
+#   hubot newrelic insights <NRQL string> - Returns results of your Insights NRQL query
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
 #   hubot newrelic ktrans id <ktrans_id> - Returns a single key transaction
 #   hubot newrelic servers - Returns statistics for all servers from New Relic
@@ -34,15 +37,24 @@
 #   marcesher
 #
 
-gist = require 'quick-gist'
-moment = require 'moment'
+_ = require 'lodash'
 diff = require 'fast-array-diff'
+gist = require 'quick-gist'
+mdTable = require('markdown-table')
+moment = require 'moment'
+
 
 plugin = (robot) ->
+
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
+  insightsKey = process.env.HUBOT_NEWRELIC_INSIGHTS_API_KEY
+  insightsEndpoint = process.env.HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
+
   return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
+  return robot.logger.error "Please provide your New Relic Insights API key at HUBOT_NEWRELIC_INSIGHTS_API_KEY" unless insightsKey
+  return robot.logger.error "Please provide your New Relic Insights API endpoint at HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT" unless insightsEndpoint
   return robot.logger.error "Please specify a room to report New Relic notifications to at HUBOT_NEWRELIC_ALERT_ROOM" unless room
 
   apiBaseUrl = "https://#{apiHost}/v2/"
@@ -250,6 +262,74 @@ plugin = (robot) ->
 
    robot.respond /(newrelic|nr) testpollalerts$/i, (msg) ->
      poll_violations robot
+
+  robot.respond /(newrelic|nr) insights (.*)$/i, (msg) ->
+    query = encodeURIComponent(msg.match[2])
+    robot.http(insightsEndpoint + '?nrql=' + query)
+      .header('Accept', 'application/json')
+      .header('X-Query-Key', insightsKey)
+      .get() (err, res, body) ->
+        if err
+          msg.send "Failed: #{err.message}"
+        else
+          data = JSON.parse(body)
+          rendered = switch
+            when data.facets? then plugin.insightsFacets(data)
+            when data.results? then plugin.insightsEvents(data)
+            else "Unable to recognize Insights response; please check your NRQL"
+          send_message msg, rendered
+
+
+insightsValueFmt = (key, val) ->
+  timestampFormat = "YYYY-MM-DD HH:mm"
+
+  if key == "timestamp"  # NR fixed column name, unlikely to ever change
+    moment(parseInt(val, 10)).format(timestampFormat)
+  else if typeof val == "number" and Number.isInteger(val)
+    val.toLocaleString()
+  else if typeof val == "number" and not Number.isInteger(val)
+    val.toFixed(2).toString()
+  else
+    val
+
+
+plugin.insightsEvents = (data) ->
+  if (
+    not data.results.length or
+    not data.results[0].events? or
+    not data.results[0].events.length
+  )
+    return "(no results)"
+
+  orderCol = data.metadata.contents[0].order.column
+  allKeys = Object.keys(data.results[0].events[0]).sort()
+  cols = [orderCol].concat(_.without(allKeys, orderCol))
+
+  extract = (r) -> _.map(cols, f = (k) -> insightsValueFmt(k, r[k]))
+  rows = (extract(row) for row in data.results[0].events)
+  rows.unshift(cols)
+
+  mdTable(rows, {align: 'l'})
+
+
+plugin.insightsFacets = (data) ->
+  if not data.facets.length
+    return "(no results)"
+
+  facetName = data.metadata.facet
+  dataItems = _.map(data.metadata.contents.contents, 'alias')
+  cols = [facetName].concat(dataItems)
+
+  rows = (
+    [r.name].concat(
+      _.map(
+        r.results, f = (r) -> insightsValueFmt("result", Object.values(r)[0])
+      )
+    ) for r in data.facets
+  )
+  rows.unshift(cols)
+
+  mdTable(rows, {align: 'l'})
 
 
 plugin.apps = (apps, opts = {}) ->
