@@ -21,8 +21,8 @@
 #   hubot newrelic insights <NRQL string> - Returns results of your Insights NRQL query
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
 #   hubot newrelic ktrans id <ktrans_id> - Returns a single key transaction
-#   hubot newrelic servers - Returns statistics for all servers from New Relic
-#   hubot newrelic servers name <filter_string> - Returns a filtered list of servers
+#   hubot newrelic infra - Returns statistics for all servers from New Relic
+#   hubot newrelic infra name <filter_string> - Returns a filtered list of servers
 #   hubot newrelic users - Returns a list of all account users from New Relic
 #   hubot newrelic users email <filter_string> - Returns a filtered list of account users
 #   hubot newrelic users emails - Returns a list of all user emails
@@ -64,6 +64,18 @@ plugin = (robot) ->
   config.up = ':white_check_mark:'
   config.down = ':no_entry_sign:'
 
+  infraQuery = _.template("""
+    SELECT
+      average(cpuPercent) AS cpuPercent,
+      average(memoryUsedBytes / memoryTotalBytes) * 100 AS memoryPercent,
+      average(diskUsedPercent) as diskUsedPercent
+    FROM SystemSample
+    FACET fullHostname
+    <%= extras %>
+    SINCE 1 minute ago
+    LIMIT 1000
+  """.replace(/\s+/, " "))
+
   _parse_response = (cb) ->
     (err, res, body) ->
       if err
@@ -88,6 +100,12 @@ plugin = (robot) ->
   post = (path, data, cb) ->
     _request(path).post(data) _parse_response(cb)
 
+  getInsights = (query, cb) ->
+    unquoted = query.replace /^['"]?(.*?)['"]?$/gi, "$1"
+    robot.http(insightsEndpoint + '?nrql=' + encodeURIComponent(unquoted))
+      .header('Accept', 'application/json')
+      .header('X-Query-Key', insightsKey)
+      .get() _parse_response(cb)
 
   send_message = (msg, messages, longMessageIntro="") ->
     if messages.length < maxMessageLength
@@ -169,12 +187,12 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.ktrans json.key_transactions, config)
 
-  robot.respond /(newrelic|nr) servers$/i, (msg) ->
-    get 'servers.json', (err, json) ->
+  robot.respond /(newrelic|nr) infra$/i, (msg) ->
+    getInsights infraQuery({'extras': ''}), (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        send_message msg, (plugin.servers json.servers, config)
+        send_message msg, plugin.insightsFacets(json)
 
   robot.respond /(newrelic|nr) apps name ([\s\S]+)$/i, (msg) ->
     data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
@@ -205,13 +223,14 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.ktran json.key_transaction, config)
 
-  robot.respond /(newrelic|nr) servers name ([a-zA-Z0-9\-.]+)$/i, (msg) ->
-    data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
-    post 'servers.json', data, (err, json) ->
+  robot.respond /(newrelic|nr) infra name ([a-zA-Z0-9\-.]+)$/i, (msg) ->
+    # we _hope_ the regex above makes NRQL injections an impossibility :-)
+    where = "WHERE fullHostname = '#{msg.match[2]}'"
+    getInsights infraQuery({'extras': where}), (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        send_message msg, (plugin.servers json.servers, config)
+        send_message msg, plugin.insightsFacets(json)
 
 
   robot.respond /(newrelic|nr) users$/i, (msg) ->
@@ -264,20 +283,15 @@ plugin = (robot) ->
      poll_violations robot
 
   robot.respond /(newrelic|nr) insights (.*)$/i, (msg) ->
-    query = encodeURIComponent(msg.match[2])
-    robot.http(insightsEndpoint + '?nrql=' + query)
-      .header('Accept', 'application/json')
-      .header('X-Query-Key', insightsKey)
-      .get() (err, res, body) ->
-        if err
-          msg.send "Failed: #{err.message}"
-        else
-          data = JSON.parse(body)
-          rendered = switch
-            when data.facets? then plugin.insightsFacets(data)
-            when data.results? then plugin.insightsEvents(data)
-            else "Unable to recognize Insights response; please check your NRQL"
-          send_message msg, rendered
+    getInsights msg.match[2], (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        rendered = switch
+          when json.facets? then plugin.insightsFacets json
+          when json.results? then plugin.insightsEvents json
+          else "Unable to recognize Insights response; please check your NRQL"
+        send_message msg, rendered
 
 
 insightsValueFmt = (key, val) ->
@@ -455,42 +469,6 @@ plugin.ktran = (ktran, opts = {}) ->
     line.join "  "
 
   lines.join("\n")
-
-plugin.servers = (servers, opts = {}) ->
-  up = opts.up || "UP"
-  down = opts.down || "DN"
-
-  servers.sort (a, b) ->
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-
-  header = """
-  | :white_medium_small_square: | Name | CPU | Mem | Fullest Disk |
-  | --- | ---  | --- | --- | ---          |
-  """
-
-  lines = servers.map (s) ->
-    line = []
-    summary = s.summary || {}
-
-    if s.reporting
-      line.push "| " + up
-    else
-      line.push "| " + down
-
-    line.push s.name
-
-    if isFinite(summary.cpu)
-      line.push "#{summary.cpu}%"
-
-    if isFinite(summary.memory)
-      line.push "#{summary.memory}%"
-
-    if isFinite(summary.fullest_disk)
-      line.push "#{summary.fullest_disk}%"
-
-    line.join " | "
-
-  "#{header}\n" + lines.join(" |\n")
 
 plugin.users = (users, opts = {}) ->
 
