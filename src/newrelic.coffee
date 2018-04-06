@@ -57,6 +57,8 @@ plugin = (robot) ->
       if err
         cb(err)
       else
+        if not body
+          return cb(new Error("No JSON response"))
         json = JSON.parse(body)
         if json.error
           cb(new Error(body))
