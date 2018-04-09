@@ -16,6 +16,7 @@
 #   hubot newrelic apps name <filter_string> - Returns a filtered list of applications
 #   hubot newrelic apps instances <app_id> - Returns a list of one application's instances
 #   hubot newrelic apps hosts <app_id> - Returns a list of one application's hosts
+#   hubot newrelic cfgov-deployed - What's currently deployed to cfgov environments?
 #   hubot newrelic deployments <app_id> - Returns a filtered list of application deployment events
 #   hubot newrelic deployments recent <app_id> - Returns a filtered list of application deployment events from the past week
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
@@ -50,6 +51,11 @@ plugin = (robot) ->
   insightsEndpoint = process.env.HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
+
+  cfgovDeployConfig = {
+    github: "https://github.com/cfpb/cfgov-refresh/",
+    environments: ['prod', 'dev']
+  }
 
   return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
   return robot.logger.error "Please provide your New Relic Insights API key at HUBOT_NEWRELIC_INSIGHTS_API_KEY" unless insightsKey
@@ -247,14 +253,51 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.users json.users, config)
 
-
-
   robot.respond /(newrelic|nr) users emails$/i, (msg) ->
     get 'users.json', (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
         send_message msg, (plugin.useremails json.users, config)
+
+  robot.respond /(newrelic|nr) cfgov-deployed$/i, (msg) ->
+    targetsQuery = """
+      SELECT uniques(target)
+      FROM CFGovDeploy
+      SINCE this quarter
+      FACET environment
+      LIMIT 1000
+    """
+    getInsights targetsQuery, (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        targets = _.flatMap(cfgovDeployConfig.environments, (env) ->
+          _.filter(json.facets, ['name', env])[0].results[0].members.sort()
+        )
+        query = _.template("""
+          SELECT * FROM CFGovDeploy
+          SINCE this quarter
+          WHERE target = '${ target }'
+          LIMIT 1
+        """)
+        Promise
+          .all(
+            # TODO would be nice to solve the n+1 queries situation here
+            _.map(targets, (target) ->
+              new Promise((resolve, reject) ->
+                getInsights query({"target": target}), (err, json) ->
+                  if err
+                    resolve({"results": []})  # TODO add some logging?
+                  else
+                    resolve(json)
+              )
+            )
+          )
+          .then(
+            (deploys) ->
+              send_message msg, plugin.insightsDeploys(deploys, cfgovDeployConfig)
+          )
 
   robot.respond /(newrelic|nr) deployments ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
@@ -348,6 +391,32 @@ plugin.insightsFacets = (data) ->
   rows.unshift(cols)
 
   mdTable(rows, {align: 'l'})
+
+
+plugin.insightsDeploys = (data, config) ->
+  rows = [
+    ["target", "env", "when", "tag/branch", "commit", "deployer", "job"]
+  ].concat(
+    _.map(_.filter(data, (d) -> d.results.length), (d) ->
+      e = d.results[0].events[0]
+      shortSha = e.revision.slice(0, 7)
+      tagBranchURL =
+        if e.tagBranch.match(/^[0-9.]+$/)
+          "#{config.github}releases/tag/#{e.tagBranch}"
+        else
+          "#{config.github}tree/#{e.tagBranch}"
+      [
+        e.target,
+        e.environment,
+        insightsValueFmt("timestamp", e.timestamp),
+        "[#{e.tagBranch}](#{tagBranchURL})",
+        "[#{shortSha}](#{config.github}commit/#{e.revision})",
+        e.deployer,
+        "[job](#{e.jobURL})",
+      ]
+    )
+  )
+  mdTable rows, {align: "l"}
 
 
 plugin.apps = (apps, opts = {}) ->
