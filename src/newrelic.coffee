@@ -18,7 +18,6 @@
 #   hubot newrelic apps hosts <app_id> - Returns a list of one application's hosts
 #   hubot newrelic deployments <app_id> - Returns a filtered list of application deployment events
 #   hubot newrelic deployments recent <app_id> - Returns a filtered list of application deployment events from the past week
-#   hubot newrelic insights <NRQL string> - Returns results of your Insights NRQL query
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
 #   hubot newrelic ktrans id <ktrans_id> - Returns a single key transaction
 #   hubot newrelic infra - Returns statistics for all servers from New Relic
@@ -282,16 +281,21 @@ plugin = (robot) ->
    robot.respond /(newrelic|nr) testpollalerts$/i, (msg) ->
      poll_violations robot
 
-  robot.respond /(newrelic|nr) insights (.*)$/i, (msg) ->
-    getInsights msg.match[2], (err, json) ->
-      if err
-        msg.send "Failed: #{err.message}"
-      else
-        rendered = switch
-          when json.facets? then plugin.insightsFacets json
-          when json.results? then plugin.insightsEvents json
-          else "Unable to recognize Insights response; please check your NRQL"
-        send_message msg, rendered
+  # TODO consider re-enabling this listener if we ever decide that:
+  #   (1) it is safe to do so -- not a security risk, or that big responses
+  #       from Insights wouldn't kill the bot, etc
+  #   (2) it would be a useful command to have in chat
+  #
+  # robot.respond /(newrelic|nr) insights (.*)$/i, (msg) ->
+  #   getInsights msg.match[2], (err, json) ->
+  #     if err
+  #       msg.send "Failed: #{err.message}"
+  #     else
+  #       rendered = switch
+  #         when json.facets? then plugin.insightsFacets json
+  #         when json.results? then plugin.insightsEvents json
+  #         else "Unable to recognize Insights response; please check your NRQL"
+  #       send_message msg, rendered
 
 
 insightsValueFmt = (key, val) ->
