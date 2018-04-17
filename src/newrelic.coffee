@@ -5,6 +5,8 @@
 #
 # Configuration:
 #   HUBOT_NEWRELIC_API_KEY
+#   HUBOT_NEWRELIC_INSIGHTS_API_KEY
+#   HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
 #   HUBOT_NEWRELIC_ALERT_ROOM
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
@@ -14,12 +16,13 @@
 #   hubot newrelic apps name <filter_string> - Returns a filtered list of applications
 #   hubot newrelic apps instances <app_id> - Returns a list of one application's instances
 #   hubot newrelic apps hosts <app_id> - Returns a list of one application's hosts
+#   hubot newrelic cfgov-deployed - What's currently deployed to cfgov environments?
 #   hubot newrelic deployments <app_id> - Returns a filtered list of application deployment events
 #   hubot newrelic deployments recent <app_id> - Returns a filtered list of application deployment events from the past week
 #   hubot newrelic ktrans - Lists stats for all key transactions from New Relic
 #   hubot newrelic ktrans id <ktrans_id> - Returns a single key transaction
-#   hubot newrelic servers - Returns statistics for all servers from New Relic
-#   hubot newrelic servers name <filter_string> - Returns a filtered list of servers
+#   hubot newrelic infra - Returns statistics for all servers from New Relic
+#   hubot newrelic infra name <filter_string> - Returns a filtered list of servers
 #   hubot newrelic users - Returns a list of all account users from New Relic
 #   hubot newrelic users email <filter_string> - Returns a filtered list of account users
 #   hubot newrelic users emails - Returns a list of all user emails
@@ -34,15 +37,29 @@
 #   marcesher
 #
 
-gist = require 'quick-gist'
-moment = require 'moment'
+_ = require 'lodash'
 diff = require 'fast-array-diff'
+gist = require 'quick-gist'
+mdTable = require('markdown-table')
+moment = require 'moment'
+
 
 plugin = (robot) ->
+
   apiKey = process.env.HUBOT_NEWRELIC_API_KEY
+  insightsKey = process.env.HUBOT_NEWRELIC_INSIGHTS_API_KEY
+  insightsEndpoint = process.env.HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
+
+  cfgovDeployConfig = {
+    github: "https://github.com/cfpb/cfgov-refresh/",
+    environments: ['prod', 'dev']
+  }
+
   return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
+  return robot.logger.error "Please provide your New Relic Insights API key at HUBOT_NEWRELIC_INSIGHTS_API_KEY" unless insightsKey
+  return robot.logger.error "Please provide your New Relic Insights API endpoint at HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT" unless insightsEndpoint
   return robot.logger.error "Please specify a room to report New Relic notifications to at HUBOT_NEWRELIC_ALERT_ROOM" unless room
 
   apiBaseUrl = "https://#{apiHost}/v2/"
@@ -52,11 +69,25 @@ plugin = (robot) ->
   config.up = ':white_check_mark:'
   config.down = ':no_entry_sign:'
 
+  infraQuery = _.template("""
+    SELECT
+      average(cpuPercent) AS cpuPercent,
+      average(memoryUsedBytes / memoryTotalBytes) * 100 AS memoryPercent,
+      average(diskUsedPercent) as diskUsedPercent
+    FROM SystemSample
+    FACET fullHostname
+    <%= extras %>
+    SINCE 1 minute ago
+    LIMIT 1000
+  """.replace(/\s+/, " "))
+
   _parse_response = (cb) ->
     (err, res, body) ->
       if err
         cb(err)
       else
+        if not body
+          return cb(new Error("No JSON response"))
         json = JSON.parse(body)
         if json.error
           cb(new Error(body))
@@ -74,6 +105,12 @@ plugin = (robot) ->
   post = (path, data, cb) ->
     _request(path).post(data) _parse_response(cb)
 
+  getInsights = (query, cb) ->
+    unquoted = query.replace /^['"]?(.*?)['"]?$/gi, "$1"
+    robot.http(insightsEndpoint + '?nrql=' + encodeURIComponent(unquoted))
+      .header('Accept', 'application/json')
+      .header('X-Query-Key', insightsKey)
+      .get() _parse_response(cb)
 
   send_message = (msg, messages, longMessageIntro="") ->
     if messages.length < maxMessageLength
@@ -155,12 +192,12 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.ktrans json.key_transactions, config)
 
-  robot.respond /(newrelic|nr) servers$/i, (msg) ->
-    get 'servers.json', (err, json) ->
+  robot.respond /(newrelic|nr) infra$/i, (msg) ->
+    getInsights infraQuery({'extras': ''}), (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        send_message msg, (plugin.servers json.servers, config)
+        send_message msg, plugin.insightsFacets(json)
 
   robot.respond /(newrelic|nr) apps name ([\s\S]+)$/i, (msg) ->
     data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
@@ -191,13 +228,14 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.ktran json.key_transaction, config)
 
-  robot.respond /(newrelic|nr) servers name ([a-zA-Z0-9\-.]+)$/i, (msg) ->
-    data = encodeURIComponent('filter[name]') + '=' +  encodeURIComponent(msg.match[2])
-    post 'servers.json', data, (err, json) ->
+  robot.respond /(newrelic|nr) infra name ([a-zA-Z0-9\-.]+)$/i, (msg) ->
+    # we _hope_ the regex above makes NRQL injections an impossibility :-)
+    where = "WHERE fullHostname = '#{msg.match[2]}'"
+    getInsights infraQuery({'extras': where}), (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
-        send_message msg, (plugin.servers json.servers, config)
+        send_message msg, plugin.insightsFacets(json)
 
 
   robot.respond /(newrelic|nr) users$/i, (msg) ->
@@ -215,14 +253,51 @@ plugin = (robot) ->
       else
         send_message msg, (plugin.users json.users, config)
 
-
-
   robot.respond /(newrelic|nr) users emails$/i, (msg) ->
     get 'users.json', (err, json) ->
       if err
         msg.send "Failed: #{err.message}"
       else
         send_message msg, (plugin.useremails json.users, config)
+
+  robot.respond /(newrelic|nr) cfgov-deployed$/i, (msg) ->
+    targetsQuery = """
+      SELECT uniques(target)
+      FROM CFGovDeploy
+      SINCE this quarter
+      FACET environment
+      LIMIT 1000
+    """
+    getInsights targetsQuery, (err, json) ->
+      if err
+        msg.send "Failed: #{err.message}"
+      else
+        targets = _.flatMap(cfgovDeployConfig.environments, (env) ->
+          _.filter(json.facets, ['name', env])[0].results[0].members.sort()
+        )
+        query = _.template("""
+          SELECT * FROM CFGovDeploy
+          SINCE this quarter
+          WHERE target = '${ target }'
+          LIMIT 1
+        """)
+        Promise
+          .all(
+            # TODO would be nice to solve the n+1 queries situation here
+            _.map(targets, (target) ->
+              new Promise((resolve, reject) ->
+                getInsights query({"target": target}), (err, json) ->
+                  if err
+                    resolve({"results": []})  # TODO add some logging?
+                  else
+                    resolve(json)
+              )
+            )
+          )
+          .then(
+            (deploys) ->
+              send_message msg, plugin.insightsDeploys(deploys, cfgovDeployConfig)
+          )
 
   robot.respond /(newrelic|nr) deployments ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
@@ -248,6 +323,100 @@ plugin = (robot) ->
 
    robot.respond /(newrelic|nr) testpollalerts$/i, (msg) ->
      poll_violations robot
+
+  # TODO consider re-enabling this listener if we ever decide that:
+  #   (1) it is safe to do so -- not a security risk, or that big responses
+  #       from Insights wouldn't kill the bot, etc
+  #   (2) it would be a useful command to have in chat
+  #
+  # robot.respond /(newrelic|nr) insights (.*)$/i, (msg) ->
+  #   getInsights msg.match[2], (err, json) ->
+  #     if err
+  #       msg.send "Failed: #{err.message}"
+  #     else
+  #       rendered = switch
+  #         when json.facets? then plugin.insightsFacets json
+  #         when json.results? then plugin.insightsEvents json
+  #         else "Unable to recognize Insights response; please check your NRQL"
+  #       send_message msg, rendered
+
+
+insightsValueFmt = (key, val) ->
+  timestampFormat = "YYYY-MM-DD HH:mm"
+
+  if key == "timestamp"  # NR fixed column name, unlikely to ever change
+    moment(parseInt(val, 10)).format(timestampFormat)
+  else if typeof val == "number" and Number.isInteger(val)
+    val.toLocaleString()
+  else if typeof val == "number" and not Number.isInteger(val)
+    val.toFixed(2).toString()
+  else
+    val
+
+
+plugin.insightsEvents = (data) ->
+  if (
+    not data.results.length or
+    not data.results[0].events? or
+    not data.results[0].events.length
+  )
+    return "(no results)"
+
+  orderCol = data.metadata.contents[0].order.column
+  allKeys = Object.keys(data.results[0].events[0]).sort()
+  cols = [orderCol].concat(_.without(allKeys, orderCol))
+
+  extract = (r) -> _.map(cols, f = (k) -> insightsValueFmt(k, r[k]))
+  rows = (extract(row) for row in data.results[0].events)
+  rows.unshift(cols)
+
+  mdTable(rows, {align: 'l'})
+
+
+plugin.insightsFacets = (data) ->
+  if not data.facets.length
+    return "(no results)"
+
+  facetName = data.metadata.facet
+  dataItems = _.map(data.metadata.contents.contents, 'alias')
+  cols = [facetName].concat(dataItems)
+
+  rows = (
+    [r.name].concat(
+      _.map(
+        r.results, f = (r) -> insightsValueFmt("result", Object.values(r)[0])
+      )
+    ) for r in data.facets
+  )
+  rows.unshift(cols)
+
+  mdTable(rows, {align: 'l'})
+
+
+plugin.insightsDeploys = (data, config) ->
+  rows = [
+    ["target", "env", "when", "tag/branch", "commit", "deployer", "job"]
+  ].concat(
+    _.map(_.filter(data, (d) -> d.results.length), (d) ->
+      e = d.results[0].events[0]
+      shortSha = e.revision.slice(0, 7)
+      tagBranchURL =
+        if e.tagBranch.match(/^[0-9.]+$/)
+          "#{config.github}releases/tag/#{e.tagBranch}"
+        else
+          "#{config.github}tree/#{e.tagBranch}"
+      [
+        e.target,
+        e.environment,
+        insightsValueFmt("timestamp", e.timestamp),
+        "[#{e.tagBranch}](#{tagBranchURL})",
+        "[#{shortSha}](#{config.github}commit/#{e.revision})",
+        e.deployer,
+        "[job](#{e.jobURL})",
+      ]
+    )
+  )
+  mdTable rows, {align: "l"}
 
 
 plugin.apps = (apps, opts = {}) ->
@@ -373,42 +542,6 @@ plugin.ktran = (ktran, opts = {}) ->
     line.join "  "
 
   lines.join("\n")
-
-plugin.servers = (servers, opts = {}) ->
-  up = opts.up || "UP"
-  down = opts.down || "DN"
-
-  servers.sort (a, b) ->
-      a.name.toLowerCase().localeCompare(b.name.toLowerCase())
-
-  header = """
-  | :white_medium_small_square: | Name | CPU | Mem | Fullest Disk |
-  | --- | ---  | --- | --- | ---          |
-  """
-
-  lines = servers.map (s) ->
-    line = []
-    summary = s.summary || {}
-
-    if s.reporting
-      line.push "| " + up
-    else
-      line.push "| " + down
-
-    line.push s.name
-
-    if isFinite(summary.cpu)
-      line.push "#{summary.cpu}%"
-
-    if isFinite(summary.memory)
-      line.push "#{summary.memory}%"
-
-    if isFinite(summary.fullest_disk)
-      line.push "#{summary.fullest_disk}%"
-
-    line.join " | "
-
-  "#{header}\n" + lines.join(" |\n")
 
 plugin.users = (users, opts = {}) ->
 

@@ -11,13 +11,16 @@ We forked this primarily to provide Mattermost-specific customizations
 1. Content with Mattermost's 4000-character post limit
 1. Use Markdown where suitable, especially for tabular output
 
+More recently, we have added commands (_eg_ 'cfgov-deployed') that are only
+likely to be relevant to CFPB users.
+
 ## Examples
 
-**Servers**
-![newrelic servers](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/servers.png)
+**Infrastructure**
+![newrelic infrastructure](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/infra.png)
 
 **Deployments**
-![newrelic servers](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/deployments.png)
+![newrelic deployments](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/deployments.png)
 
 
 
@@ -86,16 +89,16 @@ hubot newrelic ktrans
 hubot newrelic ktrans id <ktrans_id>
 ```
 
-#### Server Related Commands
+#### Infrastructure Related Commands
 
-* List all servers
+* List all hosts
 ```
-hubot newrelic servers
+hubot newrelic infra
 ```
 
-* Filtered list of servers
+* Filtered list of hosts
 ```
-hubot newrelic servers name <filter_string>
+hubot newrelic infra name <filter_string>
 ```
 
 #### User Related Commands
@@ -108,4 +111,11 @@ hubot newrelic users
 * Filtered list of account users
 ```
 hubot newrelic user email <filter_string>
+```
+
+#### CFPB-specific commands
+
+* Show what's currently deployed to cfgov environments:
+```
+hubot cfgov-deployed
 ```
