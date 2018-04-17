@@ -17,9 +17,11 @@ likely to be relevant to CFPB users.
 ## Examples
 
 **Infrastructure**
+
 ![newrelic infrastructure](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/infra.png)
 
 **Deployments**
+
 ![newrelic deployments](https://raw.githubusercontent.com/cfpb/hubot-newrelic2-cfpb/master/doc/deployments.png)
 
 
@@ -35,6 +37,8 @@ npm install --save hubot-newrelic2-cfpb
 * Set `HUBOT_NEWRELIC_API_KEY` to your New Relic API key
 * Set `HUBOT_NEWRELIC_ALERT_ROOM` to the string name or ID of the chat room to post alert violations (the particulars will depend on your chat application's implementation)
 * Set `HUBOT_NEWRELIC_API_HOST`. This will default to `api.newrelic.com` if not set
+* Set `HUBOT_NEWRELIC_INSIGHTS_API_KEY` to your New Relic Insights API key
+* Set `HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT` to your New Relic Insights API collector endpoint
 
 ## Usage
 
@@ -117,5 +121,5 @@ hubot newrelic user email <filter_string>
 
 * Show what's currently deployed to cfgov environments:
 ```
-hubot cfgov-deployed
+hubot newrelic cfgov-deployed
 ```
