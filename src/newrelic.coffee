@@ -264,7 +264,7 @@ plugin = (robot) ->
     targetsQuery = """
       SELECT uniques(target)
       FROM CFGovDeploy
-      SINCE this quarter
+      SINCE 120 days ago
       FACET environment
       LIMIT 1000
     """
@@ -277,7 +277,7 @@ plugin = (robot) ->
         )
         query = _.template("""
           SELECT * FROM CFGovDeploy
-          SINCE this quarter
+          SINCE 120 days ago
           WHERE target = '${ target }'
           LIMIT 1
         """)
