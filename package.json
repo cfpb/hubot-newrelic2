@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "coffee-script": "^1.8.0",
+    "cson": "5.1.0",
     "fast-array-diff": "^0.2.0",
     "lodash": "^4.17.5",
     "markdown-table": "1.1.1",
