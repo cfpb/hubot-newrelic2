@@ -10,9 +10,8 @@ We forked this primarily to provide Mattermost-specific customizations
 
 1. Content with Mattermost's 4000-character post limit
 1. Use Markdown where suitable, especially for tabular output
-
-More recently, we have added commands (_eg_ 'cfgov-deployed') that are only
-likely to be relevant to CFPB users.
+1. More recently, we have added commands (`cfgov-deployed`) that are only
+   likely to be relevant to CFPB users.
 
 ## Examples
 
@@ -39,6 +38,31 @@ npm install --save hubot-newrelic2-cfpb
 * Set `HUBOT_NEWRELIC_API_HOST`. This will default to `api.newrelic.com` if not set
 * Set `HUBOT_NEWRELIC_INSIGHTS_API_KEY` to your New Relic Insights API key
 * Set `HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT` to your New Relic Insights API collector endpoint
+* Set `HUBOT_NEWRELIC_CFGOV_DEPLOY_CONFIG` to point to a json file (in the bot's root directory) containing data like:
+  > ```json
+  > {
+  >     "githubBase": "https://github.com/your-org/your-repo",
+  >     "environments": [
+  >         {
+  >             "name": "prod",
+  >             "apmAppId": "A-NEW-RELIC-APM-APPLICATION-ID",
+  >             "targets": [
+  >                 "PRODUCTION-HOST-1",
+  >                 "PRODUCTION-HOST-2",
+  >             ]
+  >         },
+  >         {
+  >             "name": "dev",
+  >             "apmAppId": "A-NEW-RELIC-APM-APPLICATION-ID",
+  >             "targets": [
+  >                 "DEV-HOST-1",
+  >                 "DEV-HOST-2",
+  >             ]
+  >         }
+  >     ]
+  > }
+  > ```
+
 
 ## Usage
 

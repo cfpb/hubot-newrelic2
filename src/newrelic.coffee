@@ -38,10 +38,14 @@
 #
 
 _ = require 'lodash'
+cson = require 'cson'
 diff = require 'fast-array-diff'
 gist = require 'quick-gist'
 mdTable = require('markdown-table')
 moment = require 'moment'
+
+
+CFGOV_DEPLOY_CONFIG_ENV_VAR = "HUBOT_NEWRELIC_CFGOV_DEPLOY_CONFIG"
 
 
 plugin = (robot) ->
@@ -52,10 +56,16 @@ plugin = (robot) ->
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
   room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
 
-  cfgovDeployConfig = {
-    github: "https://github.com/cfpb/cfgov-refresh/",
-    environments: ['prod', 'dev']
-  }
+  try
+    cfgovDeployConfig = cson.parseCSONFile process.env[CFGOV_DEPLOY_CONFIG_ENV_VAR]
+  catch e
+    if e.name == "TypeError"
+      robot.logger.error "#{CFGOV_DEPLOY_CONFIG_ENV_VAR} is not defined"
+    else
+      robot.logger.error(
+        "#{process.env[CFGOV_DEPLOY_CONFIG_ENV_VAR]} could not be loaded"
+      )
+    cfgovDeployConfig = {}
 
   return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
   return robot.logger.error "Please provide your New Relic Insights API key at HUBOT_NEWRELIC_INSIGHTS_API_KEY" unless insightsKey
@@ -167,6 +177,46 @@ plugin = (robot) ->
 
   start_violations_polling(robot)
 
+  getCfgovDeploys = (deployEnv, parentResolve, page = 1, deploys) ->
+    deploys ?= _.fromPairs(
+      _.zip deployEnv.targets, _.map(deployEnv.targets, (e) -> null)
+    )
+
+    # this will go back 1200 deploys, hoping that will cover us sufficiently
+    maxPagesToRequest = 6
+
+    if page > maxPagesToRequest
+      robot.logger.error """
+        'cfgov-deployed' exceeded max API requests without finding deploys for
+        all targets in #{deployEnv.name}; verify all targets are valid
+      """.replace(/\n/, " ").replace(/\s+/, " ").trim()
+      return parentResolve({})
+
+    new Promise((resolve, reject) ->
+      get(
+        "applications/#{deployEnv.apmAppId}/deployments.json?page=#{page}",
+        (err, json) -> resolve({err: err, json: json})
+      )
+    ).then (result) ->
+      if result.err
+        robot.logger.error "'cfgov-deployed' API request error: #{result.err}"
+        parentResolve({})
+      else
+        _.each Object.keys(deploys), (target) ->
+          if !deploys[target]
+            found = _.first(
+              _.filter result.json.deployments, (d) -> d.user == target
+            )
+            if found
+              found['deployEnvName'] = deployEnv.name
+              deploys[target] = found
+        if _.filter(Object.values(deploys), (v) -> !v).length
+          new Promise((resolve, reject) ->
+            getCfgovDeploys deployEnv, resolve, page + 1, deploys
+          ).then (result_) -> parentResolve(result_)
+        else
+          parentResolve(deploys)
+
   robot.respond /(newrelic|nr) apps$/i, (msg) ->
     get 'applications.json', (err, json) ->
       if err
@@ -261,43 +311,19 @@ plugin = (robot) ->
         send_message msg, (plugin.useremails json.users, config)
 
   robot.respond /(newrelic|nr) cfgov-deployed$/i, (msg) ->
-    targetsQuery = """
-      SELECT uniques(target)
-      FROM CFGovDeploy
-      SINCE 120 days ago
-      FACET environment
-      LIMIT 1000
-    """
-    getInsights targetsQuery, (err, json) ->
-      if err
-        msg.send "Failed: #{err.message}"
-      else
-        targets = _.flatMap(cfgovDeployConfig.environments, (env) ->
-          _.filter(json.facets, ['name', env])[0].results[0].members.sort()
+    if !cfgovDeployConfig.environments?
+      return send_message msg, "The `cfgov-deployed` command is not configured."
+
+    Promise.all(
+      _.map(cfgovDeployConfig.environments, (deployEnv) ->
+        new Promise((resolve, reject) -> getCfgovDeploys(deployEnv, resolve))
+      )
+    ).then(
+      (deploys) ->
+        send_message(
+          msg, plugin.cfgovDeploys(deploys, cfgovDeployConfig.githubBase)
         )
-        query = _.template("""
-          SELECT * FROM CFGovDeploy
-          SINCE 120 days ago
-          WHERE target = '${ target }'
-          LIMIT 1
-        """)
-        Promise
-          .all(
-            # TODO would be nice to solve the n+1 queries situation here
-            _.map(targets, (target) ->
-              new Promise((resolve, reject) ->
-                getInsights query({"target": target}), (err, json) ->
-                  if err
-                    resolve({"results": []})  # TODO add some logging?
-                  else
-                    resolve(json)
-              )
-            )
-          )
-          .then(
-            (deploys) ->
-              send_message msg, plugin.insightsDeploys(deploys, cfgovDeployConfig)
-          )
+    )
 
   robot.respond /(newrelic|nr) deployments ([0-9]+)$/i, (msg) ->
     get "applications/#{msg.match[2]}/deployments.json", (err, json) ->
@@ -393,27 +419,41 @@ plugin.insightsFacets = (data) ->
   mdTable(rows, {align: 'l'})
 
 
-plugin.insightsDeploys = (data, config) ->
+plugin.cfgovDeploys = (deploys, githubBase) ->
+  if !_.filter(deploys, (d) -> Object.keys(d).length).length
+    return "No cfgov deploy data could be found."
+
   rows = [
     ["target", "env", "when", "tag/branch", "commit", "deployer", "job"]
   ].concat(
-    _.map(_.filter(data, (d) -> d.results.length), (d) ->
-      e = d.results[0].events[0]
-      shortSha = e.revision.slice(0, 7)
-      tagBranchURL =
-        if e.tagBranch.match(/^[0-9.]+$/)
-          "#{config.github}releases/tag/#{e.tagBranch}"
+    _.flatMap(deploys, (group) ->
+      _.map(group, (deploy) ->
+        shortSha = deploy.revision.slice(0, 7)
+        descrip = deploy.description.match(/^(.*?) was deployed by (.*?)$/)
+        if descrip  # we overload the description field as you can see
+          tagBranch = descrip[1]
+          deployer = descrip[2]
+          if tagBranch.startsWith('origin/')
+            tagBranch = tagBranch.slice(7)
+          tagBranchURL =
+            if tagBranch.match(/^[0-9.]+$/)
+              "#{githubBase}releases/tag/#{tagBranch}"
+            else
+              "#{githubBase}tree/#{tagBranch}"
         else
-          "#{config.github}tree/#{e.tagBranch}"
-      [
-        e.target,
-        e.environment,
-        insightsValueFmt("timestamp", e.timestamp),
-        "[#{e.tagBranch}](#{tagBranchURL})",
-        "[#{shortSha}](#{config.github}commit/#{e.revision})",
-        e.deployer,
-        "[job](#{e.jobURL})",
-      ]
+          tagBranch = "unknown"
+          deployer = "unknown"
+          tagBranchURL = "unknown"
+        [
+          deploy.user,  # actually the deploy target, not a user (don't ask)
+          deploy.deployEnvName,
+          moment(deploy.timestamp).format("YYYY-MM-DD HH:mm"),
+          "[#{tagBranch}](#{tagBranchURL})",
+          "[#{shortSha}](#{githubBase}commit/#{deploy.revision})",
+          deployer,
+          "[job](#{deploy.changelog})",
+        ]
+      )
     )
   )
   mdTable rows, {align: "l"}
