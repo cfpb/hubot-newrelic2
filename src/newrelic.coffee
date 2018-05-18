@@ -7,7 +7,6 @@
 #   HUBOT_NEWRELIC_API_KEY
 #   HUBOT_NEWRELIC_INSIGHTS_API_KEY
 #   HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
-#   HUBOT_NEWRELIC_ALERT_ROOM
 #   HUBOT_NEWRELIC_API_HOST="api.newrelic.com"
 #
 # Commands:
@@ -26,7 +25,14 @@
 #   hubot newrelic users - Returns a list of all account users from New Relic
 #   hubot newrelic users email <filter_string> - Returns a filtered list of account users
 #   hubot newrelic users emails - Returns a list of all user emails
-#   hubot newrelic alerts - Returns a list of active alert violations
+#   hubot newrelic alerts - Returns a list of active alert violations matching the current channel's subscriptions
+#   hubot newrelic alerts all - Returns a list of all active alerts
+#   hubot newrelic alerts subscribe <pattern> subscribe the current channel to alerts matching <pattern>
+#   hubot newrelic alerts unsubscribe <subscription_id> remove an existing subscription
+#   hubot newrelic alerts subscriptions - show the current channel's subscriptions
+#   hubot newrelic alerts set <setting> - enable an optional alert setting, like "verbose"
+#   hubot newrelic alerts unset <setting> - disable an optional alert setting, like "verbose"
+#   hubot newrelic alerts show <setting> - display the value of an optional alert setting, like "verbose"
 #
 # Authors:
 #   statianzo
@@ -35,7 +41,7 @@
 #   spkane
 #   cmckni3
 #   marcesher
-#
+#   rosskarchner
 
 _ = require 'lodash'
 cson = require 'cson'
@@ -43,7 +49,8 @@ diff = require 'fast-array-diff'
 gist = require 'quick-gist'
 mdTable = require('markdown-table')
 moment = require 'moment'
-
+minimatch = require 'minimatch'
+uuidv4 = require 'uuid/v4'
 
 CFGOV_DEPLOY_CONFIG_ENV_VAR = "HUBOT_NEWRELIC_CFGOV_DEPLOY_CONFIG"
 
@@ -54,7 +61,6 @@ plugin = (robot) ->
   insightsKey = process.env.HUBOT_NEWRELIC_INSIGHTS_API_KEY
   insightsEndpoint = process.env.HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT
   apiHost = process.env.HUBOT_NEWRELIC_API_HOST or 'api.newrelic.com'
-  room = process.env.HUBOT_NEWRELIC_ALERT_ROOM
 
   try
     cfgovDeployConfig = cson.parseCSONFile process.env[CFGOV_DEPLOY_CONFIG_ENV_VAR]
@@ -70,7 +76,6 @@ plugin = (robot) ->
   return robot.logger.error "Please provide your New Relic API key at HUBOT_NEWRELIC_API_KEY" unless apiKey
   return robot.logger.error "Please provide your New Relic Insights API key at HUBOT_NEWRELIC_INSIGHTS_API_KEY" unless insightsKey
   return robot.logger.error "Please provide your New Relic Insights API endpoint at HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT" unless insightsEndpoint
-  return robot.logger.error "Please specify a room to report New Relic notifications to at HUBOT_NEWRELIC_ALERT_ROOM" unless room
 
   apiBaseUrl = "https://#{apiHost}/v2/"
   maxMessageLength = 4000 # some chat servers have a limit of 4000 chars per message. Lame.
@@ -136,39 +141,84 @@ plugin = (robot) ->
       gist {content: messages, enterpriseOnly: true, fileExtension: 'md'}, (err, resp, data) ->
         robot.messageRoom room, "#{longMessageIntro} View output at: #{data.html_url}"
 
+  subscriptions_for_subscriber = (subscriber) ->
+    subscription_lookup = robot.brain.get "newrelicviolations_subscriptions"
+    (sub for sub_id, sub of subscription_lookup when sub.subscriber == subscriber)
+
+  setting_for_channel = (channel, setting) ->
+    all_channel_settings  = robot.brain.get "newrelicalerts_channelsettings"
+    settings = all_channel_settings[channel] or {}
+    settings[setting]
+
+  annotate_incident_links = (violations, incident_lookup) ->
+    account_id = process.env.HUBOT_NEWRELIC_INSIGHTS_API_ENDPOINT.match(/accounts\/(\d+)/i)[1]
+    for violation in violations
+      incident_id = incident_lookup[violation.id]
+      if incident_id
+        violation['url'] = "https://alerts.newrelic.com/accounts/#{account_id}/incidents/#{incident_id}/violations"
+      else
+        # fail over to the policy page
+        violation['url'] = "https://alerts.newrelic.com/accounts/#{account_id}/policies/#{violation.links.policy_id}"
+
+    return violations
+
+  violations_for_subscriber = (all_violations, subscriber) ->
+    subs = subscriptions_for_subscriber subscriber
+    violations = []
+    for v in all_violations
+      for sub in subs
+        if v[sub.field] and minimatch v[sub.field], sub.pattern
+          violations.push v
+    return violations
+
+  dispatch_to_subscribers = (robot, alerts, action) ->
+    subscription_lookup = robot.brain.get "newrelicviolations_subscriptions"
+    updated_channels = []
+    for alert in alerts
+      destinations = _.uniq (sub_details.subscriber for sub_id, sub_details of\
+        subscription_lookup\
+        when alert[sub_details.field] and minimatch alert[sub_details.field], sub_details.pattern)
+      for channel in destinations
+        updated_channels.push channel
+        robot.messageRoom channel, "Alert #{action}: #{alert.policy_name} | #{alert.condition_name} ([#{alert.id}](#{alert.url}))"
+    return updated_channels
+
   poll_violations = (robot) ->
-    get "alerts_violations.json?only_open=true", (err, json) ->
+    get "alerts_incidents.json", (err, json)->
       if err
         console.log err
-        # robot.messageRoom room, "New Relic Violations Polling Failed: #{err.message}"
       else
-        #console.log json.violations
-        console.log "New Relic alerts poll. #{json.violations.length} alert(s) found"
+        incident_lookup = robot.brain.get "newrelicincident_lookup" or {}
+        for incident in json.incidents
+          for violation_id in incident.links.violations
+            incident_lookup[violation_id] = incident.id
+        get "alerts_violations.json?only_open=true", (err, json) ->
+          if err
+            console.log err
+          else
+            previous = robot.brain.get 'newrelicviolations'
 
-        previous = robot.brain.get 'newrelicviolations'
+            current = annotate_incident_links json.violations, incident_lookup
 
-        current = json.violations.map (v) -> "#{v.entity.name} - #{v.policy_name}"
-        compare = diff.diff(previous || [], current)
+            violation_diff_compare = (left, right) ->
+              left.id == right.id
 
-        msg = ""
-        if compare.removed.length
-          msg = "**These New Relic alerts have cleared** :) \n\n"
-          for v in compare.removed
-            msg += "#{v} \n"
+            compare = diff.diff(previous || [], current, violation_diff_compare)
 
-        if compare.added.length
-          msg += "\n**There are new New Relic alerts** :( \n\n"
-          for v in compare.added
-            msg += "#{v} \n"
+            channels_updated = dispatch_to_subscribers robot, compare.added, "Opened"
+            channels_updated.concat dispatch_to_subscribers robot, compare.removed, "Cleared"
+            channels_updated = _.uniq channels_updated
 
-        if msg.length
-          robot.brain.set 'newrelicviolations', current
-          open = plugin.violations json.violations
-          if json.violations.length
-            msg += "\n\n**Current alerts are:** \n\n#{open} \n"
-          message_room(robot, room, msg, "New Relic alerts have been cleared or added. ")
-        else if json.violations.length
-          console.log "Violations found, but none changed since last poll... not sending message"
+            for channel in channels_updated
+              if setting_for_channel channel, 'verbose'
+                violations = violations_for_subscriber current, channel
+                if violations.length
+                  message_room robot, channel, (plugin.violations violations, config)
+                else
+                  message_room robot, channel, "No more alerts for this channel!"
+
+            robot.brain.set 'newrelicviolations', current
+            console.log "#{current.length} Violations found, #{compare.added.length} opened, #{compare.removed.length} cleared"
 
   start_violations_polling = (robot) ->
     setInterval ->
@@ -231,7 +281,7 @@ plugin = (robot) ->
       else
         result = (item for item in json.applications when item.error_rate > 0)
         if result.length > 0
-         send_message msg, (plugin.apps result, config)
+          send_message msg, (plugin.apps result, config)
         else
           msg.send "No applications with errors."
 
@@ -340,12 +390,99 @@ plugin = (robot) ->
         send_message msg, (plugin.deployments json.deployments, {recent:true})
 
 
-   robot.respond /(newrelic|nr) alerts$/i, (msg) ->
-    get "alerts_violations.json?only_open=true", (err, json) ->
-      if err
-        msg.send "Failed: #{err.message}"
-      else
-        send_message msg, (plugin.violations json.violations, config)
+   robot.respond /(newrelic|nr) alerts*\ *(all)*$/i, (msg) ->
+     all_violations = robot.brain.get "newrelicviolations"
+     room = msg.envelope.room
+
+     if msg.match[2] != 'all'
+       violations = violations_for_subscriber all_violations, msg.envelope.room
+     else
+       violations = all_violations
+
+     message_room robot, room, (plugin.violations violations, config)
+
+
+   robot.respond /(newrelic|nr) alerts* (set|unset|show) (.*)$/i, (msg) ->
+     action = msg.match[2]
+     setting = msg.match[3]
+     all_channel_settings  = robot.brain.get "newrelicalerts_channelsettings"
+
+     if not all_channel_settings
+       all_channel_settings = {}
+     room = msg.envelope.room
+
+     settings = all_channel_settings[room] or {}
+
+     if action == 'set'
+       settings[setting] = true
+
+     else if action == 'unset'
+       settings[setting] = false
+
+     all_channel_settings[room] = settings
+     robot.brain.set "newrelicalerts_channelsettings", all_channel_settings
+
+     message_room robot, room, "#{setting} is set to #{settings[setting]}"
+
+   robot.respond /(newrelic|nr) alerts* (subscriptions|subscribed)$/i, (msg) ->
+     room = msg.envelope.room
+     subscriber = msg.envelope.room
+     subscriptions = robot.brain.get "newrelicviolations_subscriptions"
+
+     # I'm sure there's a more idiomatic way of doing this:
+     my_subs = [['id', 'field', 'pattern']]
+     for id, details of subscriptions
+       if details.subscriber == subscriber
+         my_subs.push [id, details.field, details.pattern]
+     if my_subs.length > 1
+       message_room robot, room, mdTable my_subs
+     else
+       message_room robot, room, "You are not subscribed to any alerts"
+
+   robot.respond /(newrelic|nr) alerts* unsubscribe (.*)$/i, (msg) ->
+     subscription_id  = msg.match[2]
+     room = msg.envelope.room
+
+     subscriptions = robot.brain.get "newrelicviolations_subscriptions"
+
+     subscription = subscriptions[subscription_id]
+
+     if not subscription
+       message_room robot, room, "No such subscription!"
+       return
+
+     if subscription.subscriber == room
+       delete subscriptions[subscription_id]
+       message_room robot, room, "subscription #{subscription_id} deleted!"
+     else
+       message_room robot, room, "It doesn't seem like that subscription belongs to you"
+
+
+
+   robot.respond /(newrelic|nr) alerts* subscribe ([\w\*\.\_\-]+)\ *([\w\*\.\_\-]*)$/i, (msg) ->
+     if msg.match[3] != ''
+       field = msg.match[2]
+       pattern = msg.match[3]
+     else
+       # if there's only one match, then the first argument is
+       # the pattern, and we assume the field is policy_name
+       field = 'policy_name'
+       pattern = msg.match[2]
+
+     subscriber = msg.envelope.room
+     subscription_id = uuidv4()
+
+     subscriptions = robot.brain.get "newrelicviolations_subscriptions"
+
+     if not subscriptions
+       subscriptions = {}
+
+     subscription = {pattern,field,subscriber}
+     subscriptions[subscription_id] = subscription
+     robot.brain.set "newrelicviolations_subscriptions", subscriptions
+     message_room robot, msg.envelope.room, "Created subscription #{subscription_id}. This channel will receive any alerts where #{field} matches #{pattern}"
+     message_room robot, msg.envelope.room, "Unsubscribe with `nr alerts unsubscribe #{subscription_id}`"
+     message_room robot, msg.envelope.room, "show all subscriptions with `nr alerts subscriptions`"
 
    robot.respond /(newrelic|nr) testpollalerts$/i, (msg) ->
      poll_violations robot
@@ -610,7 +747,8 @@ plugin.deployments = (deployments, opts = {}) ->
     today = new Date()
 
     recent = deployments.filter (d) ->
-      Math.round((today.getTime() - new Date(d.timestamp).getTime() ) / DAY) <= 7
+      Math.round((today.getTime() - new Date(d.timestamp).getTime()
+      ) / DAY) <= 7
     deployments = recent
 
   header = """
@@ -633,6 +771,8 @@ plugin.deployments = (deployments, opts = {}) ->
 plugin.violations = (violations, opts = {}) ->
 
   header = """
+  **Current alerts are:**
+
   | Entity | Policy name | Opened | Duration |
   | ---    | ---         | ---    | ---      |
   """
@@ -642,7 +782,7 @@ plugin.violations = (violations, opts = {}) ->
 
     line.push "|" + v.entity.name
     line.push "#{v.policy_name} - #{v.condition_name}"
-    line.push moment(v.opened_at).calendar()
+    line.push "[#{moment(v.opened_at).calendar()}](#{v.url})"
     line.push moment.duration(v.duration, 's').humanize()
 
     line.join " | "
