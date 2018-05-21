@@ -188,7 +188,7 @@ plugin = (robot) ->
       if err
         console.log err
       else
-        incident_lookup = robot.brain.get "newrelicincident_lookup" or {}
+        incident_lookup = {}
         for incident in json.incidents
           for violation_id in incident.links.violations
             incident_lookup[violation_id] = incident.id
