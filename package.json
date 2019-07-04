@@ -34,13 +34,17 @@
     "minimatch": "^3.0.4",
     "moment": "2.19.3",
     "quick-gist": "^1.3.1",
-    "uuid": "^3.2.1"
+    "uuid": "^3.2.1",
+    "snyk": "^1.189.0"
   },
   "main": "index.coffee",
   "scripts": {
-    "test": "./node_modules/.bin/nodeunit --reporter skip_passed"
+    "test": "./node_modules/.bin/nodeunit --reporter skip_passed",
+    "snyk-protect": "snyk protect",
+    "prepublish": "npm run snyk-protect"
   },
   "devDependencies": {
     "nodeunit": "^0.9.0"
-  }
+  },
+  "snyk": true
 }
