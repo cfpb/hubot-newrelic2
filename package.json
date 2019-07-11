@@ -29,7 +29,7 @@
     "coffee-script": "^1.8.0",
     "cson": "5.1.0",
     "fast-array-diff": "^0.2.0",
-    "lodash": "^4.17.5",
+    "lodash": "^4.17.14",
     "markdown-table": "1.1.1",
     "minimatch": "^3.0.4",
     "moment": "2.19.3",
