@@ -27,7 +27,7 @@
 #   hubot newrelic users emails - Returns a list of all user emails
 #   hubot newrelic alerts - Returns a list of active alert violations matching the current channel's subscriptions
 #   hubot newrelic alerts all - Returns a list of all active alerts
-#   hubot newrelic alerts subscribe <pattern> subscribe the current channel to alerts matching <pattern>
+#   hubot newrelic alerts subscribe <pattern> subscribe the current channel to alerts whose policy name(s) matches <pattern>. Regexes are OK, eg cf.gov*
 #   hubot newrelic alerts unsubscribe <subscription_id> remove an existing subscription
 #   hubot newrelic alerts subscriptions - show the current channel's subscriptions
 #   hubot newrelic alerts set <setting> - enable an optional alert setting, like "verbose"
@@ -167,7 +167,7 @@ plugin = (robot) ->
     violations = []
     for v in all_violations
       for sub in subs
-        if v[sub.field] and minimatch v[sub.field], sub.pattern
+        if v[sub.field] and minimatch v[sub.field], sub.pattern, {nocase: true}
           violations.push v
     return violations
 
@@ -177,7 +177,7 @@ plugin = (robot) ->
     for alert in alerts
       destinations = _.uniq (sub_details.subscriber for sub_id, sub_details of\
         subscription_lookup\
-        when alert[sub_details.field] and minimatch alert[sub_details.field], sub_details.pattern)
+        when alert[sub_details.field] and minimatch alert[sub_details.field], sub_details.pattern, {nocase: true})
       for channel in destinations
         updated_channels.push channel
         robot.messageRoom channel, "Alert #{action}: #{alert.policy_name} | #{alert.condition_name} ([#{alert.id}](#{alert.url}))"
@@ -424,6 +424,19 @@ plugin = (robot) ->
 
      message_room robot, room, "#{setting} is set to #{settings[setting]}"
 
+   robot.respond /(newrelic|nr) alerts* dump_subscriptions$/i, (msg) ->
+     room = msg.envelope.room
+     subscriptions = robot.brain.get "newrelicviolations_subscriptions"
+    #  console.log subscriptions
+
+     subs = [['id', 'subscriber', 'field', 'pattern']]
+     for id, details of subscriptions
+       subs.push [id, details.subscriber, details.field, details.pattern]
+     if subs.length > 1
+       message_room robot, room, mdTable subs
+     else
+       message_room robot, room, "There are no alerts subscriptions"
+
    robot.respond /(newrelic|nr) alerts* (subscriptions|subscribed)$/i, (msg) ->
      room = msg.envelope.room
      subscriber = msg.envelope.room
@@ -458,16 +471,9 @@ plugin = (robot) ->
        message_room robot, room, "It doesn't seem like that subscription belongs to you"
 
 
-
-   robot.respond /(newrelic|nr) alerts* subscribe ([\w\*\.\_\-]+)\ *([\w\*\.\_\-]*)$/i, (msg) ->
-     if msg.match[3] != ''
-       field = msg.match[2]
-       pattern = msg.match[3]
-     else
-       # if there's only one match, then the first argument is
-       # the pattern, and we assume the field is policy_name
-       field = 'policy_name'
-       pattern = msg.match[2]
+   robot.respond /(newrelic|nr) alerts* subscribe (.*)$/i, (msg) ->
+     field = 'policy_name'
+     pattern = msg.match[2]
 
      subscriber = msg.envelope.room
      subscription_id = uuidv4()
