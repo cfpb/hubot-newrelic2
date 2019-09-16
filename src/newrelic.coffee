@@ -27,7 +27,7 @@
 #   hubot newrelic users emails - Returns a list of all user emails
 #   hubot newrelic alerts - Returns a list of active alert violations matching the current channel's subscriptions
 #   hubot newrelic alerts all - Returns a list of all active alerts
-#   hubot newrelic alerts subscribe <pattern> subscribe the current channel to alerts whose policy name(s) matches <pattern>. Regexes are OK, eg cf.gov*
+#   hubot newrelic alerts subscribe <pattern> subscribe the current channel to alerts whose policy name(s) matches <pattern>. Simple matching patterns such as '*' will work, eg cf.gov*
 #   hubot newrelic alerts unsubscribe <subscription_id> remove an existing subscription
 #   hubot newrelic alerts subscriptions - show the current channel's subscriptions
 #   hubot newrelic alerts set <setting> - enable an optional alert setting, like "verbose"
